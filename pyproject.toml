@@ -1,0 +1,178 @@
+[project]
+name = "ai-symbiont"
+version = "0.1.0"
+description = "Mines a developer's agent history for pain points and pushes warnings and recalls into the coding harness."
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "numpy>=2.5.4",
+]
+
+[project.optional-dependencies]
+# What `symbiont nightly` trains and serves with, on the user's own machine. mlx-lm trains on an
+# Apple Silicon Mac; torch, peft and transformers merge the kit, and serve the judge everywhere
+# (a Mac's torch uses mps). A CUDA machine needs a CUDA build of torch; PyPI's Windows torch is CPU-only.
+nightly = [
+    "mlx-lm>=0.32; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torch>=2.15",
+    "peft>=0.21",
+    "transformers>=5.22",
+]
+
+[project.scripts]
+symbiont = "symbiont.cli:main"
+# The harness hook command: its own entry point so it imports no learner and starts fast.
+symbiont-hook = "symbiont.delivery.hook_main:main"
+
+[dependency-groups]
+dev = [
+    "codespell==2.4.1",
+    "coverage[toml]==7.17.0",
+    "diff-cover==11.0.0",
+    "defusedxml==0.7.1",
+    "duckdb==1.5.5",
+    "fastembed==0.9.1",
+    "import-linter==2.15",
+    "interrogate==1.7.0",
+    "lizard==1.24.3",
+    "mutmut==3.8.0",
+    "mypy==2.4.0",
+    "pip-audit==2.10.1",
+    "pip-licenses==5.5.5",
+    "pytest>=8",
+    "pytest-cov==7.1.0",
+    "pytest-randomly==5.0.0",
+    "ruff==0.17.3",
+    "semgrep==1.182.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "symbiont"
+# The published package is the product: readers, miner, core, store, service, delivery and the
+# local egress door. Research and hackathon code stays in the repo and never ships, so an install
+# carries no remote model client, no API key loader and no game code. tests/test_published_wheel.py
+# builds the wheel and fails if a shipped module imports anything listed here.
+source-exclude = [
+    "src/symbiont/act1",
+    "src/symbiont/eval",
+    "src/symbiont/routeb",
+    "src/symbiont/egress/lan_send.py",
+    "src/symbiont/egress/remote_send.py",
+    "src/symbiont/egress/remote_chat.py",
+    "src/symbiont/egress/spend.py",
+    "src/symbiont/egress/providers.py",
+    "src/symbiont/egress/credentials.py",
+    "src/symbiont/egress/messages.py",
+    "src/symbiont/egress/file_lock.py",
+    # Contributor notes describe the research side too; an install needs none of them.
+    "src/symbiont/**/AGENTS.md",
+    "src/symbiont/**/CLAUDE.md",
+]
+wheel-exclude = [
+    "symbiont/act1",
+    "symbiont/eval",
+    "symbiont/routeb",
+    "symbiont/egress/lan_send.py",
+    "symbiont/egress/remote_send.py",
+    "symbiont/egress/remote_chat.py",
+    "symbiont/egress/spend.py",
+    "symbiont/egress/providers.py",
+    "symbiont/egress/credentials.py",
+    "symbiont/egress/messages.py",
+    "symbiont/egress/file_lock.py",
+    "symbiont/**/AGENTS.md",
+    "symbiont/**/CLAUDE.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `tests` on the path so conftest and tests share the airplane helpers;
+# importlib mode lets test files in different folders share a basename.
+pythonpath = ["tests"]
+# -p randomly: QG-TST-04. Named explicitly so a missing plugin fails loudly instead of silently
+# running in file order. run.sh picks and prints the seed.
+addopts = "--import-mode=importlib --strict-markers -p randomly"
+markers = [
+    "periphery: test may touch the network, files or the clock (store, service, delivery). Unmarked tests run in airplane mode.",
+]
+
+# Quality gates (docs/standards/quality-gates.html). Fix the code, never the gate.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", ".claude", ".superpowers", "spikes", "data", "runs", "tests/fixtures"]
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# C901 / PLR0912 / PLR0915 are absent on purpose: lizard owns complexity so a waiver
+# is per function, not per file.
+select = ["E", "W", "F", "B", "BLE", "S110", "S112", "FBT", "N", "PLR0913",
+          "SIM", "UP", "I", "RET", "PIE", "PERF", "T20", "ERA", "TD", "FIX", "D", "PGH004"]
+# D100/D104/D107: module, package and __init__ docstrings; D203/D213: google style wins.
+ignore = ["D100", "D104", "D107", "D203", "D213"]
+pylint.max-args = 5
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S", "FBT", "PLR0913", "T20"]
+"scripts/**" = ["T20", "D"]
+"ops/**" = ["T20", "D"]
+"src/symbiont/cli.py" = ["T20"]
+"src/symbiont/wizard/**" = ["T20"]
+"**/__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/symbiont"]
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+check_untyped_defs = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["symbiont.core.*", "symbiont.miner.*", "symbiont.records.*"]
+strict = true
+
+[[tool.mypy.overrides]]
+# Third-party packages without stubs; each named, never global.
+module = ["vizdoom.*", "peft.*", "mcp.*"]
+ignore_missing_imports = true
+
+[tool.interrogate]
+# QG-RD-01: public API docstring coverage. run.sh judges the changed src files; the whole-tree
+# figure lives in scripts/gates/baseline.json for the phase 2 cleanup.
+fail-under = 90
+ignore-private = true
+ignore-magic = true
+ignore-module = true
+exclude = ["tests", "scripts", "spikes"]
+
+[tool.mutmut]
+# QG-TST-05: mutation score on the pure core. Run by scripts/gates/mutation.sh, never by run.sh
+# (minutes, not seconds). Key names verified against mutmut 3.8.0 (configuration.py): the
+# standard's paths_to_mutate and tests_dir are deprecated aliases of the two below.
+# The whole package is copied (a partial copy shadows the installed one and breaks imports);
+# only_mutate narrows what is mutated to the pure core and the signals.
+source_paths = ["src/symbiont"]
+only_mutate = ["src/symbiont/core/*", "src/symbiont/miner/signals/*"]
+pytest_add_cli_args_test_selection = ["tests/core", "tests/miner"]
+# a fixed order and no random seed: a mutant must be killed by the test, not by the shuffle
+pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider"]
+
+[tool.coverage.run]
+source = ["src/symbiont"]
+branch = true
+omit = ["src/symbiont/cli.py", "src/symbiont/wizard/*"]
+
+[tool.coverage.report]
+# Overall floor; the core floor (90) lands with the phase 2 coverage_core script.
+fail_under = 75
+show_missing = true
+skip_covered = true
